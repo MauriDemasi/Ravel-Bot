@@ -161,3 +161,9 @@ dist
 
 # env
 .env
+
+# package-lock.json
+package-lock.json
+
+# tsconfig.json
+tsconfig.json
