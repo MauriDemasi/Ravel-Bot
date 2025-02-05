@@ -48,7 +48,7 @@ async getWeatherAndPackingRecommendations(input: {
   }
 }
 
-  private async getWeatherInfo(location: typeLocation): Promise<typeWheatherInfo> {
+  async getWeatherInfo(location: typeLocation): Promise<typeWheatherInfo> {
     try {
       const response = await axios.get(
         `https://api.weatherapi.com/v1/current.json?key=${process.env.WEATHERAPI_API_KEY}&q=${location.city},${location.country}&lang=es`
@@ -81,7 +81,7 @@ async getWeatherAndPackingRecommendations(input: {
     return "ropa ligera, gafas de sol";
   }
 
-  private async getPackingRecommendations(
+  async getPackingRecommendations(
     location: typeLocation,
     activities: string[],
     weatherInfo: typeWheatherInfo

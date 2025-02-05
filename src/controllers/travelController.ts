@@ -1,8 +1,10 @@
 import { Request, Response, NextFunction } from "express";
+import { v4 as uuidv4 } from "uuid"; // Para generar UUIDs
 import { DestinationAgent } from "../services/agents/DestinationAgent";
 import { LuggageWeatherAgent } from "../services/agents/LuggageWeatherAgent";
-import RedisService from "../services/redis/redisService"; // Importar el servicio de Redis
+import RedisService from "../services/redis/redisService";
 import { ConversationContext } from "../types/typeConversationContext";
+import { typeLocation } from "../types/typeLocation";
 
 interface Message {
   role: "system" | "user";
@@ -14,14 +16,33 @@ interface Message {
 const destinationAgent = new DestinationAgent();
 const luggageWeatherAgent = new LuggageWeatherAgent();
 
+// Función para convertir location a typeLocation
+const getLocationAsObject = (location: string | undefined): typeLocation | undefined => {
+  if (!location) return undefined;
+  try {
+    return JSON.parse(location); // Parsea la cadena JSON a un objeto typeLocation
+  } catch (error) {
+    console.error("Error al parsear location:", error);
+    return undefined;
+  }
+};
+
+// Función para convertir typeLocation a string
+const getLocationAsString = (location: typeLocation | undefined): string | undefined => {
+  if (!location) return undefined;
+  return JSON.stringify(location); // Convierte el objeto typeLocation a una cadena JSON
+};
+
 export const chat = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    console.log("Datos recibidos:", req.body);
-    const { topic, location, preferences, activities, dateRange, userId } = req.body;
+    const { topic, location, preferences, activities, dateRange, conversationId } = req.body;
+
+    // Si no se pasa un conversationId, generamos uno nuevo
+    const convId = conversationId || uuidv4();
 
     // Validación básica del topic
     if (!topic) {
@@ -29,65 +50,124 @@ export const chat = async (
       return;
     }
 
-    // Validaciones específicas según el topic
-    if (topic === "destinos") {
-      if (!preferences || !dateRange) {
-        res.status(400).json({ error: "Para consultas de destinos se requieren preferencias y rango de fechas." });
-        return;
-      }
-    } else if (topic === "clima") {
-      if (!location || !activities || !dateRange) {
-        res.status(400).json({ error: "Para consultas de clima se requieren ubicación, actividades y rango de fechas." });
-        return;
-      }
-    } else {
-      res.status(400).json({ error: "Tema no reconocido." });
-      return;
-    }
-
-    // Obtener o crear el contexto desde Redis
-    const userIdKey = userId || 'default'; // Usar 'default' si no hay userId
-    let conversationContext = await RedisService.getConversationContext(userIdKey);
-
+    // Obtener o crear el contexto desde Redis usando el conversationId
+    let conversationContext: ConversationContext | null = await RedisService.getConversationContext(convId);
     if (!conversationContext) {
+      console.log("No se encontró contexto en Redis. Creando uno nuevo...");
       conversationContext = {
         actualTheme: topic,
         messages: [],
+        preferences: [], // Inicializamos campos opcionales como vacíos
+        location: undefined,
+        activities: [],
+        dateRange: undefined,
       };
+    } else {
+      console.log("Contexto recuperado de Redis:", conversationContext);
     }
 
-    // Procesar la solicitud según el topic
-    if (topic === "destinos") {
-      const recommendation = await destinationAgent.getDestinationRecommendations(
-        { preferences, budget: 1000, dateRange },
-        conversationContext
-      );
+    // Función auxiliar para verificar si un campo está presente en la solicitud o el contexto
+    const getValueOrDefault = <T>(value: T | undefined, contextValue: T | undefined, fieldName: string): T => {
+      if (value !== undefined) {
+        console.log(`Usando ${fieldName} de la solicitud.`);
+        return value;
+      }
+      if (contextValue !== undefined) {
+        console.log(`Usando ${fieldName} del contexto.`);
+        return contextValue;
+      }
+      throw new Error(`Falta el campo requerido: ${fieldName}`);
+    };
 
-      const message: Message = {
-        role: "system",
-        type: "destination_recommendation",
-        content: recommendation,
-      };
+    try {
+      // Procesar la solicitud según el topic
+      if (topic === "destinos") {
+        // Validar campos específicos para "destinos"
+        const preferencesToUse = getValueOrDefault(preferences, conversationContext.preferences, "preferences");
+        const dateRangeToUse = getValueOrDefault(dateRange, conversationContext.dateRange, "dateRange");
 
-      conversationContext.messages.push(message);
-      await RedisService.saveConversationContext(userIdKey, conversationContext); // Guardar en Redis
-      res.json(recommendation);
-      return;
-    } else if (topic === "clima") {
-      const { weather, packing } = await luggageWeatherAgent.getWeatherAndPackingRecommendations(
-        { location, dateRange, activities },
-        conversationContext
-      );
+        console.log("Preferences utilizadas:", preferencesToUse);
+        console.log("DateRange utilizado:", dateRangeToUse);
 
-      const message: Message = {
-        role: "system",
-        type: "weather_packing_recommendation",
-        content: { weather, packing },
-      };
+        // Obtener las recomendaciones de destinos
+        const recommendation = await destinationAgent.getDestinationRecommendations(
+          { preferences: preferencesToUse, budget: 1000, dateRange: dateRangeToUse },
+          conversationContext
+        );
 
-      conversationContext.messages.push(message);
-      await RedisService.saveConversationContext(userIdKey, conversationContext); // Guardar en Redis
-      res.json({ weather, packing });
+        const message: Message = {
+          role: "system",
+          type: "destination_recommendation",
+          content: recommendation,
+        };
+
+        // Actualizar el contexto con los valores utilizados
+        conversationContext.messages.push(message);
+        conversationContext.preferences = preferencesToUse;
+        conversationContext.dateRange = dateRangeToUse;
+
+        // Usar el primer destino recomendado como location
+        if (recommendation.locations && recommendation.locations.length > 0) {
+          const firstLocation = recommendation.locations[0];
+          // Almacenar location como string (cadena JSON)
+          conversationContext.location = getLocationAsString({
+            city: firstLocation.city,
+            country: firstLocation.country,
+            description: firstLocation.description,
+          });
+          console.log("Actualizando location en el contexto:", conversationContext.location);
+        }
+
+        // Si se proporciona activities en la solicitud, actualizar el contexto
+        if (activities) {
+          conversationContext.activities = activities;
+        }
+
+        await RedisService.saveConversationContext(convId, conversationContext); // Guardar en Redis
+        res.json({ conversationId: convId, recommendation });
+        return;
+      } else if (topic === "clima" || topic === "equipaje") {
+        // Validar campos específicos para "clima" y "equipaje"
+        const locationToUse = getValueOrDefault(
+          location,
+          getLocationAsObject(conversationContext.location),
+          "location"
+        );
+        const activitiesToUse = getValueOrDefault(activities, conversationContext.activities, "activities");
+        const dateRangeToUse = getValueOrDefault(dateRange, conversationContext.dateRange, "dateRange");
+
+        console.log("Location utilizada:", locationToUse);
+        console.log("Activities utilizadas:", activitiesToUse);
+        console.log("DateRange utilizado:", dateRangeToUse);
+
+        // Obtener el clima y las recomendaciones de equipaje
+        const weatherInfo = await luggageWeatherAgent.getWeatherInfo(locationToUse);
+        const packingRecommendations = await luggageWeatherAgent.getPackingRecommendations(
+          locationToUse, activitiesToUse, weatherInfo
+        );
+
+        const message: Message = {
+          role: "system",
+          type: "weather_packing_recommendation",
+          content: packingRecommendations,
+        };
+
+        // Actualizar el contexto con los valores utilizados
+        conversationContext.messages.push(message);
+        conversationContext.location = getLocationAsString(locationToUse);
+        conversationContext.activities = activitiesToUse;
+        conversationContext.dateRange = dateRangeToUse;
+
+        await RedisService.saveConversationContext(convId, conversationContext);
+        res.json({ conversationId: convId, packingRecommendations });
+        return;
+      } else {
+        res.status(400).json({ error: "Tema no reconocido." });
+        return;
+      }
+    } catch (validationError:any) {
+      console.error("Error de validación:", validationError.message);
+      res.status(400).json({ error: validationError.message });
       return;
     }
   } catch (error) {
