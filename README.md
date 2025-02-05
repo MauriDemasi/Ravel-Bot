@@ -53,8 +53,8 @@ Objetivo:  Crear una herramienta que simplifique la planificación de viajes al 
 
 1. Clonar el repositorio:
    ```bash
-   git clone https://github.com/tu-usuario/travel-bot.git
-   cd travel-bot
+   git clone https://github.com/MauriDemasi/Ravel-Bot.git
+   cd Ravel
    ```
 
 2. Instalar dependencias:
