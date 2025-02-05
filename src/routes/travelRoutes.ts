@@ -1,10 +1,8 @@
-import express from "express";
-import { planTrip } from "../controllers/travelController";
-import { validateTravelRequest } from "../middlewares/validationMiddleware";
+import express, { RequestHandler } from "express";
+import { chat } from "../controllers/travelController"; // Asegúrate de que la ruta sea correcta
 
 const router = express.Router();
 
-// Aplicar el middleware de validación antes de manejar la solicitud
-router.post("/chat", validateTravelRequest, planTrip);
+router.post("/chat", chat as RequestHandler);
 
 export { router as travelRouter };

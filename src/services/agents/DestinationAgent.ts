@@ -1,6 +1,11 @@
 import { tavily } from "@tavily/core";
 import { ChatOpenAI } from "@langchain/openai";
 import { TypeTravelRecomendation } from "../../types/typeTravelRecomendation";
+import { ConversationContext } from "../../types/typeConversationContext";
+
+import dotenv from "dotenv";
+dotenv.config();
+
 
 export class DestinationAgent {
   private tavilyClient: any;
@@ -20,30 +25,34 @@ export class DestinationAgent {
     preferences: string[];
     budget?: number;
     dateRange?: { start: Date; end: Date };
-  }): Promise<TypeTravelRecomendation> {
+  }, context: ConversationContext): Promise<TypeTravelRecomendation> {
     try {
       if (!input.preferences || input.preferences.length === 0) {
         throw new Error("Se requiere al menos una preferencia.");
       }
-
-      // 1️⃣ Buscar destinos en Tavily
+  
       const query = `Destinos turísticos para ${input.preferences.join(", ")} con un presupuesto de ${input.budget} USD`;
       const searchResults = await this.tavilyClient.search(query);
-
-      // 2️⃣ Generar recomendaciones con OpenAI
-      return await this.generateJsonResponse(searchResults);
+  
+      // Actualizar el contexto con el formato correcto
+      context.actualTheme = 'destinos';
+      context.messages.push({
+        role: "system",
+        type: "destination_recommendation",
+        content: `Buscando destinos para: ${input.preferences.join(", ")}`
+      });
+  
+      return await this.generateJsonResponse(searchResults, context);
     } catch (error) {
       console.error("Error en DestinationAgent:", error);
       throw error;
     }
   }
-
-  private async generateJsonResponse(searchResults: any): Promise<TypeTravelRecomendation> {
+  
+  private async generateJsonResponse(searchResults: any, context: ConversationContext): Promise<TypeTravelRecomendation> {
     const prompt = `
       Eres un asistente experto en turismo. A partir de la siguiente información:
-
       Resultados de búsqueda: ${JSON.stringify(searchResults)}
-
       Devuelve **solo** un objeto JSON con el siguiente formato:
       {
         "locations": [
@@ -62,12 +71,20 @@ export class DestinationAgent {
         },
         "culturalNotes": ["Notas culturales sobre el destino"]
       }
-
       **Importante**: Responde solo con el JSON, sin texto adicional.
     `;
-
+  
     const response = await this.llm.invoke(prompt.trim());
-    return this.parseResponse(response.content.toString());
+    const recommendation = this.parseResponse(response.content.toString());
+  
+    // Agregar mensaje de respuesta con el formato correcto
+    context.messages.push({
+      role: "system",
+      type: "destination_recommendation",
+      content: `Destinos recomendados: ${recommendation.locations?.map(loc => loc.city).join(', ') || 'No se encontraron destinos.'}`
+    });
+  
+    return recommendation;
   }
 
   private parseResponse(responseText: string): TypeTravelRecomendation {

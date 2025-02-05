@@ -31,14 +31,35 @@ export class TravelGraph {
     });
 
     this.graph.addNode("luggage-weather-agent", async (input: any) => {
-      const agent = new LuggageWeatherAgent();
-      const result = await agent.getWeatherAndPackingRecommendations({
-        location: input.data?.selectedDestination,
-        dateRange: input.dateRange,
-        activities: input.preferences,
-      });
-      return { topic: "clima-equipaje", data: result };
+      console.log("🟡 Entrada en luggage-weather-agent:", JSON.stringify(input, null, 2));
+    
+      if (!input.location && !input.data?.selectedDestination) {
+        console.error("❌ ERROR: Falta la ubicación en la request");
+        throw new Error("La ubicación es obligatoria para obtener el clima.");
+      }
+    
+      if (!input.activities || input.activities.length === 0) {
+        console.error("❌ ERROR: No se especificaron actividades.");
+        throw new Error("Debes incluir al menos una actividad.");
+      }
+    
+      try {
+        const agent = new LuggageWeatherAgent();
+        const result = await agent.getWeatherAndPackingRecommendations({
+          location: input.location || input.data?.selectedDestination,
+          dateRange: input.dateRange,
+          activities: input.activities,
+        });
+    
+        console.log("✅ Respuesta de luggage-weather-agent:", JSON.stringify(result, null, 2));
+        return { topic: "clima-equipaje", data: result };
+      } catch (error) {
+        console.error("🔥 ERROR en luggage-weather-agent:", error);
+        throw error;
+      }
     });
+    
+    
 
     // Conectar nodos
     this.graph.addEdge(START, "topic-router"); // El flujo empieza en el enrutador
