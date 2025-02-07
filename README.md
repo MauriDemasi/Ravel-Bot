@@ -79,6 +79,13 @@ Objetivo:  Crear una herramienta que simplifique la planificación de viajes al 
    npm start
    ```
 
+5. En caso de contar con Docker instalado, levantamos una instancia de Redis:
+   ```bash
+   docker run --name redis-server -d -p 6379:6379 redis
+   ```
+   Caso contrario, refierase a [Instalar Redis](https://redis.io/docs/latest/operate/oss_and_stack/install/install-redis/)
+
+
 ## 📡 Endpoint de API
 
 **POST `/api/chat`**
